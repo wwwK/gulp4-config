@@ -1,18 +1,23 @@
 const { src, dest, parallel, series, watch } = require('gulp');
+const changed = require('gulp-changed');
 const sass = require('gulp-sass');
-const prefix = require('gulp-autoprefixer');
-const sourcemaps = require('gulp-sourcemaps');
+const cleanCSS = require('gulp-clean-css');
+const autoprefixer = require('gulp-autoprefixer');
+const gutil = require('gulp-util');
+const uglify = require('gulp-uglify');
 const plumber = require('gulp-plumber');
-const browsersync = require('browser-sync');
-const csso = require('gulp-csso');
+const browserSync = require('browser-sync');
+const spritesmith = require('gulp.spritesmith');
 const del = require('del');
 
 // 开发目录配置
 var SOURCE = {
-    client: './client', 
+    client: './client',
     html: './client',
     scss: './client/scss',
     js: './client/js',
+    font: './client/fonts',
+    icon: './client/icons',
     images: './client/images'
 };
 
@@ -21,85 +26,112 @@ var OUTPUT = {
     build: './build/',
     css: './build/css',
     js: './build/js',
+    font: './build/fonts',
     images: './build/images'
-}
+};
 
-// 编译html.images
-function copy() {
-    return src([`${SOURCE.client}/**/*.html`, `${SOURCE.client}/**/*.*`])
+// 编译html
+function html() {
+    var options = {
+        removeComments: true,//清除HTML注释
+        collapseWhitespace: false,//压缩HTML
+        removeScriptTypeAttributes: false,//删除<script>的type="text/javascript"
+        removeStyleLinkTypeAttributes: true,//删除<style>和<link>的type="text/css"
+        minifyJS: true,//压缩页面JS
+        minifyCSS: true//压缩页面CSS
+    };
+    return src([`${SOURCE.client}/**/*.html`])
+        .pipe(changed(OUTPUT.build, {hasChanged: changed.compareSha1Digest}))
         .pipe(dest(OUTPUT.build))
+        .pipe(browserSync.reload({stream: true}));
 }
 
 // 编译scss
-function css() {
-  return src([`${SOURCE.scss}/**/*.scss`, `!${SOURCE.scss}/variable.scss`, `!${SOURCE.scss}/mixin.scss`])
-    .pipe(sourcemaps.init())
-    // Stay live and reload on error
-    .pipe(plumber({
-        handleError: function (err) {
-            console.log(err);
-            this.emit('end');
-        }
-    }))
-    .pipe(sass({
-        includePaths: [`${SOURCE.scss}/`],
-        outputStyle: 'compressed'
-    }).on('error', sass.logError))
-    .pipe(prefix(['last 15 versions','> 1%','ie 8','ie 7','iOS >= 9','Safari >= 9','Android >= 4.4','Opera >= 30'], {
-        cascade: true
-    }))
-    .pipe(csso({
-        restructure: false,
-        sourceMap: true,
-        debug: true
-    }))
-    .pipe(sourcemaps.write('.'))
-    .pipe(dest(OUTPUT.css));
+function scss() {
+    return src([`${SOURCE.scss}/**/*.scss`, `!${SOURCE.scss}/variable.scss`, `!${SOURCE.scss}/mixin.scss`,`!${SOURCE.scss}/base.scss`,])
+        .pipe(changed(OUTPUT.css, {hasChanged: changed.compareSha1Digest}))
+        .pipe(plumber())
+        .pipe(sass({
+                includePaths: [`${SOURCE.scss}/`]
+            })
+            .on('error', function (err) {
+                gutil.log('Less Error!', err.message);
+                this.end();
+            })
+        )
+        .pipe(autoprefixer({
+            browsers: ['last 20 versions'],
+            cascade: false
+        }))
+        .pipe(cleanCSS())
+        .pipe(dest(OUTPUT.css));
 }
 
 // 编译js
-function js() {
-    return src(`${SOURCE.JS}/**/*.js`)
-    .pipe(sourcemaps.init())
-    .pipe(sourcemaps.write('.'))
-    .pipe(dest(OUTPUT.js));
+function script() {
+    return src(`${SOURCE.js}/**/*.js`)
+        .pipe(changed(OUTPUT.js, {hasChanged: changed.compareSha1Digest}))
+        .pipe(uglify())
+        .pipe(dest(OUTPUT.js));
 }
 
-// BrowserSync
-function browserSync() {
-    browsersync({
+
+function font() {
+    return src([`${SOURCE.font}/**/*.*`])
+        .pipe(changed(OUTPUT.font, {hasChanged: changed.compareSha1Digest}))
+        .pipe(dest(OUTPUT.font))
+        .pipe(browserSync.reload({stream: true}));
+}
+
+function image() {
+    return src([`${SOURCE.images}/**/*.*`])
+        .pipe(changed(OUTPUT.images, {hasChanged: changed.compareSha1Digest}))
+        .pipe(dest(OUTPUT.images))
+        .pipe(browserSync.reload({stream: true}));
+}
+
+function sprite() {
+    return src(`${SOURCE.icon}/**/*.png`)
+        .pipe(changed(OUTPUT.images, {hasChanged: changed.compareSha1Digest}))
+        .pipe(spritesmith({
+            imgName: 'images/sprite.png',
+            cssName: 'css/sprite.css'
+        }))
+        .pipe(dest(OUTPUT.build)); //输出目录
+}
+
+function sync() {
+    browserSync({
         server: {
-            baseDir: OUTPUT.build
+            baseDir: OUTPUT.build,
+            port: 8000,
+            livereload: true
         }
     });
 }
 
-// BrowserSync刷新 
-function browserReload () {
-    return browsersync.reload;
-}
-
 // 监听文件变化
 function watchFiles() {
-    watch( `${SOURCE.scss}/**/*.scss`, parallel(css))
-    .on('change', browserReload());
-    watch(`${SOURCE.js}/**/*.js`, parallel(js))
-    .on('change', browserReload());
-    watch(`${SOURCE.client}/**/*.html`, parallel(copy))
-    .on('change', browserReload());
-    watch(`${SOURCE.images}/**/*`)
-    .on('change', series(copy, css, js, browserReload()));
+    watch(`${SOURCE.html}/**/*.html`, series(html));
+
+    watch( `${SOURCE.scss}/**/*.scss`, series(scss));
+
+    watch(`${SOURCE.js}/**/*.js`, series(script));
+
+    watch(`${SOURCE.font}/**/*.*`, series(font));
+
+    watch([`${SOURCE.images}/**/*.png`, `${SOURCE.images}/**/*.jpg`], series(image));
+
+    watch([`${SOURCE.icon}/**/*.png`, `${SOURCE.icon}/**/*.jpg`], series(sprite));
 }
 
 function clean() {
     return del([OUTPUT.build])
 }
 
-const build = parallel(copy, css, js);
-const watching = parallel(watchFiles, browserSync);
+const serve = parallel(html, scss, script, image, font, sprite);
 
-exports.js = js;
-exports.css = css;
-exports.copy = copy;
-exports.default = series(clean, build);
-exports.watch = watching;
+exports.default = series(clean, serve, watchFiles, sync);
+exports.build = serve;
+exports.clean = clean;
+exports.sprite = sprite;

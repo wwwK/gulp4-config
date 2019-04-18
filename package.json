@@ -5,9 +5,9 @@
   "main": "gulpfile.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "gulp default",
+    "build": "gulp build",
     "watch": "gulp watch",
-    "prewatch": "npm run build"
+    "default": "gulp default"
   },
   "repository": {
     "type": "git",
